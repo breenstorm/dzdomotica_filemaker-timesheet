@@ -1,0 +1,19 @@
+{
+  "name": "breenstorm/dzdomotica_filemaker-timesheet",
+  "description": "FileMaker Data API drop-in replacement for dzdomotica_timesheet-engine's TimeSheet class.",
+  "type": "library",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "Basz"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "TimesheetEngine\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=8.1"
+  }
+}
