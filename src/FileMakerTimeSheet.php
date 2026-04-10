@@ -127,6 +127,11 @@ class FileMakerTimeSheet
             $row['Items::ClassType'] = $classType;
         }
 
+        // Store activity separately — it's written via Items Detail layout after the portal row is created
+        if ($entry->activity !== null && $entry->activity !== '') {
+            $row['activity'] = $entry->activity;
+        }
+
         $this->pendingRows[] = $row;
     }
 
@@ -164,13 +169,29 @@ class FileMakerTimeSheet
             $url = $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}");
 
             foreach ($this->pendingRows as $row) {
-                $this->request('PATCH', $url, [
+                $activity = $row['activity'] ?? null;
+                unset($row['activity']);
+
+                $response = $this->request('PATCH', $url, [
                     'fieldData'  => new \stdClass(),
                     'portalData' => ['ItemsTimesheet' => [$row]],
                 ], [
                     'Authorization: Bearer ' . $this->token,
                     'Content-Type: application/json',
                 ]);
+
+                // Set Activity on the newly created Items record via Items Detail layout
+                if ($activity !== null && !empty($response['response']['newPortalRecordInfo'])) {
+                    $itemsRecordId = $response['response']['newPortalRecordInfo'][0]['recordId'];
+                    $this->request('PATCH',
+                        $this->apiUrl("databases/{$this->database}/layouts/Items%20Detail/records/{$itemsRecordId}"),
+                        ['fieldData' => ['Activity' => $activity]],
+                        [
+                            'Authorization: Bearer ' . $this->token,
+                            'Content-Type: application/json',
+                        ]
+                    );
+                }
             }
 
             echo "[FM] Submitted " . count($this->pendingRows)
@@ -362,21 +383,13 @@ class FileMakerTimeSheet
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT,        30);
         if ($body !== null) {
-            $encoded = json_encode($body, JSON_UNESCAPED_UNICODE);
-            if (str_contains($url, 'Timesheet/records') && $method === 'PATCH') {
-                echo "[FM DEBUG] PATCH $url\n";
-                echo "[FM DEBUG] Body: $encoded\n";
-            }
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $encoded);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE));
         }
         $raw      = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error    = curl_error($ch);
         curl_close($ch);
         if ($error) throw new RuntimeException("[FM] cURL error: $error");
-        if (str_contains($url, 'Timesheet/records') && $method === 'PATCH') {
-            echo "[FM DEBUG] Response ($httpCode): $raw\n";
-        }
         $decoded = json_decode($raw, true);
         if ($decoded === null) throw new RuntimeException("[FM] Invalid JSON response (HTTP $httpCode): $raw");
         return $decoded;
