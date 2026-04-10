@@ -252,7 +252,7 @@ class FileMakerTimeSheet
     private function authenticate(): string
     {
         $url      = $this->apiUrl("databases/{$this->database}/sessions");
-        $response = $this->request('POST', $url, [], [
+        $response = $this->request('POST', $url, new \stdClass(), [
             'Authorization: Basic ' . base64_encode("{$this->username}:{$this->password}"),
             'Content-Type: application/json',
         ]);
