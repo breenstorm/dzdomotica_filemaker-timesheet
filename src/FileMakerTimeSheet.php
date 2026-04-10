@@ -366,13 +366,21 @@ class FileMakerTimeSheet
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT,        30);
         if ($body !== null) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE));
+            $encoded = json_encode($body, JSON_UNESCAPED_UNICODE);
+            if (str_contains($url, 'Timesheet/records') && $method === 'PATCH') {
+                echo "[FM DEBUG] PATCH $url\n";
+                echo "[FM DEBUG] Body: $encoded\n";
+            }
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $encoded);
         }
         $raw      = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error    = curl_error($ch);
         curl_close($ch);
         if ($error) throw new RuntimeException("[FM] cURL error: $error");
+        if (str_contains($url, 'Timesheet/records') && $method === 'PATCH') {
+            echo "[FM DEBUG] Response ($httpCode): $raw\n";
+        }
         $decoded = json_decode($raw, true);
         if ($decoded === null) throw new RuntimeException("[FM] Invalid JSON response (HTTP $httpCode): $raw");
         return $decoded;
