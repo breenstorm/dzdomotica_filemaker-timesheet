@@ -11,8 +11,8 @@ use RuntimeException;
  * Writes directly to FileMaker Server via the Data API
  * instead of generating an Excel file.
  *
- * Reuses TimesheetEngine\TimeEntry from dzdomotica_timesheet-engine,
- * which is declared as a composer dependency of this package.
+ * Uses the Job layout — one flat record per TimeEntry, no portal,
+ * no hidden primary key dependency.
  *
  * Same public interface as TimeSheet:
  *   getProjects(), getDisciplines(), getClassifications()
@@ -46,7 +46,12 @@ class FileMakerTimeSheet
     private string $database;
     private string $username;
     private string $password;
-    private string $layout = 'Timesheet';
+
+    // Layout used for reading value lists (has Projecten + Uursoort)
+    private string $layoutTimesheet = 'Timesheet';
+
+    // Layout used for writing entries — flat record per entry, no portal needed
+    private string $layoutJob = 'Job';
 
     // Lookup lists populated from FM value lists at construction,
     // returned by getProjects() / getDisciplines() / getClassifications()
@@ -76,7 +81,7 @@ class FileMakerTimeSheet
         'Senior technician'  => 'Senior technician',
         'Technician'         => 'Technician',
         'Other'              => 'Other',
-        'Travel'             => null, // travel lines → TravelTime, not ClassType
+        'Travel'             => null, // travel lines use TravelHours, not ClassType
     ];
 
     // State set by writeHeader()
@@ -84,11 +89,14 @@ class FileMakerTimeSheet
     private int    $weekNo       = 0;
     private int    $year         = 0;
 
-    // Portal rows buffered by writeEntry(), flushed in save()
+    // Job records buffered by writeEntry(), flushed in save()
     private array $pendingRows = [];
 
     // FM session token, held from construction through save()
     private string $token = '';
+
+    // When true, prints what would be sent but does not write to FM
+    private bool $dryRun = false;
 
     // -------------------------------------------------------------------------
     // CONSTRUCTION
@@ -98,12 +106,14 @@ class FileMakerTimeSheet
         string $url,
         string $database,
         string $username,
-        string $password
+        string $password,
+        bool   $dryRun = false
     ) {
         $this->baseUrl  = rtrim($url, '/');
         $this->database = $database;
         $this->username = $username;
         $this->password = $password;
+        $this->dryRun   = $dryRun;
 
         $this->token = $this->authenticate();
         $this->loadValueLists();
@@ -142,7 +152,7 @@ class FileMakerTimeSheet
     }
 
     /**
-     * Store employee + week context for the FM parent record.
+     * Store employee + week context used when writing Job records.
      * Called identically to TimeSheet::writeHeader().
      */
     public function writeHeader(string $name, string $week, string $year): void
@@ -153,52 +163,47 @@ class FileMakerTimeSheet
     }
 
     /**
-     * Buffer one TimesheetEngine\TimeEntry as a FileMaker Items portal row.
+     * Buffer one TimesheetEngine\TimeEntry as a FileMaker Job record.
      * Called identically to TimeSheet::writeEntry().
-     *
-     * TimeEntry is provided by the dzdomotica_timesheet-engine package
-     * and reused here directly — no duplication.
      */
     public function writeEntry(TimeEntry $entry, bool $withBillable = true): void
     {
-        $row = [];
+        $row = [
+            'Employee' => $this->employeeName,
+        ];
 
         // Date — FM expects MM/DD/YYYY
         if ($entry->date !== null) {
-            $row['Items::Date'] = $entry->date->format('m/d/Y');
+            $row['Date'] = $entry->date->format('m/d/Y');
         }
 
-        // Project — resolve FM code from the display name process.php matched
+        // Project
         $this->resolveProject($entry->project, $row);
 
         // Hours
         if ($entry->workhours !== null && $entry->workhours > 0) {
-            $row['Items::WorkingTime'] = $entry->workhours;
+            $row['WorkHours'] = $entry->workhours;
         }
         if ($entry->travelhours !== null && $entry->travelhours > 0) {
-            $row['Items::TravelTime'] = $entry->travelhours;
+            $row['TravelHours'] = $entry->travelhours;
         }
         if ($entry->traveldistance !== null && $entry->traveldistance > 0) {
-            $row['Items::Kilometers'] = $entry->traveldistance;
+            $row['Kilometers'] = $entry->traveldistance;
         }
         if ($entry->parking !== null && $entry->parking > 0) {
-            $row['Items::Parking'] = $entry->parking;
+            $row['Parking'] = $entry->parking;
         }
 
         // ClassType
         $classType = $this->resolveClassType($entry->discipline);
         if ($classType !== null) {
-            $row['Items::ClassType'] = $classType;
+            $row['ClassType'] = $classType;
         }
 
-        // Billable / declare flags ('y' or '')
-        if ($withBillable) {
-            $row['Items::ToInvoice'] = $entry->billable ? 'y' : '';
+        // Activity
+        if ($entry->activity !== null && $entry->activity !== '') {
+            $row['Activity'] = $entry->activity;
         }
-
-        $hasExpenses = ($entry->parking       !== null && $entry->parking       > 0)
-                    || ($entry->traveldistance !== null && $entry->traveldistance > 0);
-        $row['Items::ToDeclare'] = $hasExpenses ? 'y' : '';
 
         $this->pendingRows[] = $row;
     }
@@ -219,11 +224,20 @@ class FileMakerTimeSheet
                 throw new RuntimeException('[FM] writeHeader() must be called before save().');
             }
 
-            $recordId = $this->findOrCreateWeekRecord();
-            echo "[FM] Using week {$this->weekNo} record ID: $recordId\n";
+            if ($this->dryRun) {
+                echo "[FM] DRY RUN — would submit " . count($this->pendingRows)
+                    . " Job records for {$this->employeeName} week {$this->weekNo}/{$this->year}:\n";
+                echo json_encode($this->pendingRows, JSON_PRETTY_PRINT) . "\n";
+                return;
+            }
 
-            $this->writePortalRows($recordId);
-            echo "[FM] Submitted " . count($this->pendingRows) . " entries"
+            $written = 0;
+            foreach ($this->pendingRows as $row) {
+                $this->writeJobRecord($row);
+                $written++;
+            }
+
+            echo "[FM] Submitted $written Job records"
                 . " for {$this->employeeName} week {$this->weekNo}/{$this->year}.\n";
 
         } finally {
@@ -267,7 +281,8 @@ class FileMakerTimeSheet
 
     private function loadValueLists(): void
     {
-        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layout}");
+        // Value lists (Projecten, Uursoort) live on the Timesheet layout
+        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}");
         $response = $this->request('GET', $url, null, [
             'Authorization: Bearer ' . $this->token,
         ]);
@@ -316,67 +331,18 @@ class FileMakerTimeSheet
     // RECORD OPERATIONS
     // -------------------------------------------------------------------------
 
-    private function findOrCreateWeekRecord(): string
+    private function writeJobRecord(array $fieldData): void
     {
-        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layout}/_find");
+        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutJob}/records");
         $response = $this->request('POST', $url, [
-            'query' => [
-                ['Employee' => $this->employeeName, 'weekno' => (string) $this->weekNo],
-            ],
-            'limit' => 1,
-        ], [
-            'Authorization: Bearer ' . $this->token,
-            'Content-Type: application/json',
-        ]);
-
-        // FM returns error code 401 when a find yields no records
-        if (($response['messages'][0]['code'] ?? '') === '401') {
-            echo "[FM] No existing record for week {$this->weekNo}, creating one.\n";
-            return $this->createWeekRecord();
-        }
-
-        if (!empty($response['response']['data'][0]['recordId'])) {
-            return $response['response']['data'][0]['recordId'];
-        }
-
-        throw new RuntimeException('[FM] Unexpected find response: ' . json_encode($response));
-    }
-
-    private function createWeekRecord(): string
-    {
-        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layout}/records");
-        $response = $this->request('POST', $url, [
-            'fieldData' => [
-                'Employee' => $this->employeeName,
-                'weekno'   => $this->weekNo,
-            ],
-        ], [
-            'Authorization: Bearer ' . $this->token,
-            'Content-Type: application/json',
-        ]);
-
-        if (empty($response['response']['recordId'])) {
-            throw new RuntimeException('[FM] Failed to create week record: ' . json_encode($response));
-        }
-
-        return $response['response']['recordId'];
-    }
-
-    private function writePortalRows(string $recordId): void
-    {
-        $url      = $this->apiUrl("databases/{$this->database}/layouts/{$this->layout}/records/$recordId");
-        $response = $this->request('PATCH', $url, [
-            'fieldData'  => new \stdClass(), // FM requires this key even when empty
-            'portalData' => [
-                'ItemsTimesheet' => $this->pendingRows,
-            ],
+            'fieldData' => $fieldData,
         ], [
             'Authorization: Bearer ' . $this->token,
             'Content-Type: application/json',
         ]);
 
         if (($response['messages'][0]['code'] ?? '-1') !== '0') {
-            throw new RuntimeException('[FM] Failed to write portal rows: ' . json_encode($response));
+            throw new RuntimeException('[FM] Failed to write Job record: ' . json_encode($response));
         }
     }
 
@@ -386,7 +352,7 @@ class FileMakerTimeSheet
 
     /**
      * Resolve the FM project code from a display name and populate
-     * Items::Projectno + Items::Projectname in the portal row.
+     * Projectno + Projectname in the Job record.
      *
      * process.php already did fuzzy matching against getProjects() and
      * stored the winning display name in $entry->project, so a direct
@@ -400,26 +366,26 @@ class FileMakerTimeSheet
 
         // Direct hit — the name came from our own value list
         if (isset($this->projectCode[$projectName])) {
-            $row['Items::Projectno']   = $this->projectCode[$projectName];
-            $row['Items::Projectname'] = $projectName;
+            $row['Projectno']   = $this->projectCode[$projectName];
+            $row['Projectname'] = $projectName;
             return;
         }
 
         // process.php appends " (rawDesc)" on unmatched projects — strip and retry
         $stripped = preg_replace('/\s*\([^)]+\)\s*$/', '', $projectName);
         if ($stripped !== $projectName && isset($this->projectCode[$stripped])) {
-            $row['Items::Projectno']   = $this->projectCode[$stripped];
-            $row['Items::Projectname'] = $stripped;
+            $row['Projectno']   = $this->projectCode[$stripped];
+            $row['Projectname'] = $stripped;
             return;
         }
 
         echo "[FM] WARNING: No FM project code for '$projectName'\n";
-        $row['Items::Projectname'] = $projectName;
+        $row['Projectname'] = $projectName;
     }
 
     /**
      * Map a TimeEntry discipline string to the FM ClassType value.
-     * Returns null for Travel entries (they carry no ClassType).
+     * Returns null for Travel entries (they use TravelHours instead).
      */
     private function resolveClassType(?string $discipline): ?string
     {
