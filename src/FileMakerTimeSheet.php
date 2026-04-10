@@ -1,5 +1,4 @@
 <?php
-
 namespace TimesheetEngine;
 
 use RuntimeException;
