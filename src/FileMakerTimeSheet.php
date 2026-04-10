@@ -197,6 +197,33 @@ class FileMakerTimeSheet
             echo "[FM] Submitted " . count($this->pendingRows)
                 . " entries for {$this->employeeName} week {$this->weekNo}/{$this->year}.\n";
 
+            // Calculate totals from pending rows and write them to the Timesheet record
+            $sumWorking  = 0.0;
+            $sumTravel   = 0.0;
+            $sumKm       = 0.0;
+            $sumParking  = 0.0;
+            foreach ($this->pendingRows as $row) {
+                $sumWorking += floatval($row['Items::WorkingTime'] ?? 0);
+                $sumTravel  += floatval($row['Items::TravelTime']  ?? 0);
+                $sumKm      += floatval($row['Items::Kilometers']  ?? 0);
+                $sumParking += floatval($row['Items::Parking costs'] ?? 0);
+            }
+
+            $this->request('PATCH', $url, [
+                'fieldData' => [
+                    'SumWorkingHours' => $sumWorking,
+                    'SumTravelHours'  => $sumTravel,
+                    'SumKm'           => $sumKm,
+                    'SumParking'      => $sumParking,
+                    'TotalTime'       => $sumWorking + $sumTravel,
+                ],
+            ], [
+                'Authorization: Bearer ' . $this->token,
+                'Content-Type: application/json',
+            ]);
+
+            echo "[FM] Updated totals: {$sumWorking}h work, {$sumTravel}h travel, {$sumKm}km, €{$sumParking} parking.\n";
+
         } finally {
             $this->logoutInternal();
         }
