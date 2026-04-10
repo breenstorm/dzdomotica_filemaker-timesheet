@@ -255,7 +255,41 @@ class FileMakerTimeSheet
 
         if ($code === '0') {
             $recordId = (int) $response['response']['data'][0]['recordId'];
-            echo "[FM] Found Timesheet record {$recordId} for {$employeeName} week {$weekNo}.\n";
+            echo "[FM] Found Timesheet record {$recordId} for {$employeeName} week {$weekNo} — clearing existing entries.\n";
+
+            // Fetch the full record to get all portal rows (find result may be paginated)
+            $full = $this->request('GET',
+                $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$recordId}"),
+                null,
+                ['Authorization: Bearer ' . $this->token]
+            );
+            $existing = $full['response']['data'][0]['portalData']['ItemsTimesheet'] ?? [];
+
+            foreach ($existing as $row) {
+                $this->request('DELETE',
+                    $this->apiUrl("databases/{$this->database}/layouts/Items/records/{$row['recordId']}"),
+                    null,
+                    ['Authorization: Bearer ' . $this->token]
+                );
+            }
+
+            if (!empty($existing)) {
+                echo "[FM] Deleted " . count($existing) . " existing entries.\n";
+
+                // Reset stored totals to zero
+                $this->request('PATCH',
+                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$recordId}"),
+                    ['fieldData' => [
+                        'SumWorkingHours' => 0,
+                        'SumTravelHours'  => 0,
+                        'SumKm'           => 0,
+                        'SumParking'      => 0,
+                        'TotalTime'       => 0,
+                    ]],
+                    ['Authorization: Bearer ' . $this->token, 'Content-Type: application/json']
+                );
+            }
+
             return $recordId;
         }
 
