@@ -157,18 +157,17 @@ class FileMakerTimeSheet
                 throw new RuntimeException('[FM] No Timesheet record — writeHeader() failed?');
             }
 
-            $this->request(
-                'PATCH',
-                $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}"),
-                [
+            $url = $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}");
+
+            foreach ($this->pendingRows as $row) {
+                $this->request('PATCH', $url, [
                     'fieldData'  => new \stdClass(),
-                    'portalData' => ['ItemsTimesheet' => $this->pendingRows],
-                ],
-                [
+                    'portalData' => ['ItemsTimesheet' => [$row]],
+                ], [
                     'Authorization: Bearer ' . $this->token,
                     'Content-Type: application/json',
-                ]
-            );
+                ]);
+            }
 
             echo "[FM] Submitted " . count($this->pendingRows)
                 . " entries for {$this->employeeName} week {$this->weekNo}/{$this->year}.\n";
