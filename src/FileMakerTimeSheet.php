@@ -123,7 +123,9 @@ class FileMakerTimeSheet
             $row['Items::Parking costs'] = $entry->parking;
         }
 
-        // Mark billable entries for invoicing — mirrors Excel engine behaviour
+        // Mark billable entries for invoicing — mirrors Excel engine behaviour.
+        // The billable flag is set by process.php from the event description parameter
+        // or derived from whether the project name contains 'indirect'.
         if ($withBillable && ($entry->billable ?? false)) {
             $row['Items::ToInvoice'] = 'y';
         }
