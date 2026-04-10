@@ -52,6 +52,7 @@ class FileMakerTimeSheet
     private array  $pendingRows     = [];   // buffered Items:: portal rows
     private string $token           = '';
     private bool   $dryRun          = false;
+    private bool   $submit          = false;
 
     public function __construct(
         string $url,
@@ -59,7 +60,8 @@ class FileMakerTimeSheet
         string $username,
         string $password,
         bool   $dryRun     = false,
-        string $employeeId = ''
+        string $employeeId = '',
+        bool   $submit     = false
     ) {
         $this->baseUrl    = rtrim($url, '/');
         $this->database   = $database;
@@ -67,6 +69,7 @@ class FileMakerTimeSheet
         $this->password   = $password;
         $this->dryRun     = $dryRun;
         $this->employeeId = $employeeId;
+        $this->submit     = $submit;
         $this->token      = $this->authenticate();
         $this->loadValueLists();
     }
@@ -231,6 +234,15 @@ class FileMakerTimeSheet
             ]);
 
             echo "[FM] Updated totals: {$sumWorking}h work, {$sumTravel}h travel, {$sumKm}km, €{$sumParking} parking.\n";
+
+            if ($this->submit) {
+                $this->request('GET',
+                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}") . '?script=Submit',
+                    null,
+                    ['Authorization: Bearer ' . $this->token]
+                );
+                echo "[FM] Timesheet submitted.\n";
+            }
 
         } finally {
             $this->logoutInternal();
