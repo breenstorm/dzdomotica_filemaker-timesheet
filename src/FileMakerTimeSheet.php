@@ -257,24 +257,27 @@ class FileMakerTimeSheet
             $recordId = (int) $response['response']['data'][0]['recordId'];
             echo "[FM] Found Timesheet record {$recordId} for {$employeeName} week {$weekNo} — clearing existing entries.\n";
 
-            // Fetch the full record to get all portal rows (find result may be paginated)
-            $full = $this->request('GET',
-                $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$recordId}"),
-                null,
-                ['Authorization: Bearer ' . $this->token]
-            );
-            $existing = $full['response']['data'][0]['portalData']['ItemsTimesheet'] ?? [];
-
-            foreach ($existing as $row) {
-                $this->request('DELETE',
-                    $this->apiUrl("databases/{$this->database}/layouts/Items/records/{$row['recordId']}"),
+            $deleted = 0;
+            do {
+                $full = $this->request('GET',
+                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$recordId}"),
                     null,
                     ['Authorization: Bearer ' . $this->token]
                 );
-            }
+                $existing = $full['response']['data'][0]['portalData']['ItemsTimesheet'] ?? [];
 
-            if (!empty($existing)) {
-                echo "[FM] Deleted " . count($existing) . " existing entries.\n";
+                foreach ($existing as $row) {
+                    $this->request('DELETE',
+                        $this->apiUrl("databases/{$this->database}/layouts/Items/records/{$row['recordId']}"),
+                        null,
+                        ['Authorization: Bearer ' . $this->token]
+                    );
+                    $deleted++;
+                }
+            } while (!empty($existing));
+
+            if ($deleted > 0) {
+                echo "[FM] Deleted {$deleted} existing entries.\n";
 
                 // Reset stored totals to zero
                 $this->request('PATCH',
