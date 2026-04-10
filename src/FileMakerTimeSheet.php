@@ -127,10 +127,6 @@ class FileMakerTimeSheet
             $row['Items::ClassType'] = $classType;
         }
 
-        if ($entry->activity !== null && $entry->activity !== '') {
-            $row['Items::Activity'] = $entry->activity;
-        }
-
         $this->pendingRows[] = $row;
     }
 
