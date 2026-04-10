@@ -89,6 +89,9 @@ class FileMakerTimeSheet
         $this->year         = (int) $year;
 
         if (!$this->dryRun) {
+            // Re-authenticate to get a fresh token before any write operations
+            $this->logoutInternal();
+            $this->token      = $this->authenticate();
             $this->timesheetId = $this->findOrCreateTimesheet($name, (int) $week);
         }
     }
@@ -156,6 +159,11 @@ class FileMakerTimeSheet
             if ($this->timesheetId === null) {
                 throw new RuntimeException('[FM] No Timesheet record — writeHeader() failed?');
             }
+
+            // Re-authenticate to ensure we have a fresh token — the iCal
+            // processing phase can take long enough to expire the session
+            $this->logoutInternal();
+            $this->token = $this->authenticate();
 
             $url = $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}");
 
