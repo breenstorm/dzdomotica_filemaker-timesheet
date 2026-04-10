@@ -110,7 +110,8 @@ class FileMakerTimeSheet
         $this->resolveProject($entry->project, $row);
 
         if ($entry->workhours !== null && $entry->workhours > 0) {
-            $row['Items::WorkingTime'] = $entry->workhours;
+            $row['Items::WorkingTime']   = $entry->workhours;
+            $row['Items::TimeInstaller'] = $entry->workhours;
         }
         if ($entry->travelhours !== null && $entry->travelhours > 0) {
             $row['Items::TravelTime'] = $entry->travelhours;
@@ -120,6 +121,11 @@ class FileMakerTimeSheet
         }
         if ($entry->parking !== null && $entry->parking > 0) {
             $row['Items::Parking costs'] = $entry->parking;
+        }
+
+        // Mark billable entries for invoicing — mirrors Excel engine behaviour
+        if ($withBillable && ($entry->billable ?? false)) {
+            $row['Items::ToInvoice'] = 'y';
         }
 
         $classType = $this->resolveClassType($entry->discipline);
