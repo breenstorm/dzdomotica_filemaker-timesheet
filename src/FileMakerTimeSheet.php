@@ -1,4 +1,5 @@
 <?php
+
 namespace TimesheetEngine;
 
 use RuntimeException;
@@ -183,6 +184,19 @@ class FileMakerTimeSheet
         ]);
         if (($response['messages'][0]['code'] ?? '-1') !== '0') {
             throw new RuntimeException('[FM] Failed to write Job record: ' . json_encode($response));
+        }
+
+        // Call the Submit job script on the new record so it gets picked up by the Timesheet view
+        $recordId = $response['response']['recordId'] ?? null;
+        if ($recordId !== null) {
+            $this->request('PATCH',
+                $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutJob}/records/{$recordId}") . '?script=Submit%20job',
+                ['fieldData' => new \stdClass()],
+                [
+                    'Authorization: Bearer ' . $this->token,
+                    'Content-Type: application/json',
+                ]
+            );
         }
     }
 
