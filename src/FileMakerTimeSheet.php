@@ -81,6 +81,7 @@ class FileMakerTimeSheet
     public function getProjects(): array        { return $this->projects; }
     public function getDisciplines(): array     { return $this->disciplines; }
     public function getClassifications(): array { return $this->classifications; }
+    public function getPendingRows(): array     { return $this->pendingRows; }
 
     /**
      * Find or create the Timesheet record for this employee + week.
