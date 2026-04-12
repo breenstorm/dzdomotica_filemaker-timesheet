@@ -53,24 +53,27 @@ class FileMakerTimeSheet
     private string $token           = '';
     private bool   $dryRun          = false;
     private bool   $submit          = false;
+    private string $projectManager  = '';
 
     public function __construct(
         string $url,
         string $database,
         string $username,
         string $password,
-        bool   $dryRun     = false,
-        string $employeeId = '',
-        bool   $submit     = false
+        bool   $dryRun         = false,
+        string $employeeId     = '',
+        bool   $submit         = false,
+        string $projectManager = ''
     ) {
-        $this->baseUrl    = rtrim($url, '/');
-        $this->database   = $database;
-        $this->username   = $username;
-        $this->password   = $password;
-        $this->dryRun     = $dryRun;
-        $this->employeeId = $employeeId;
-        $this->submit     = $submit;
-        $this->token      = $this->authenticate();
+        $this->baseUrl        = rtrim($url, '/');
+        $this->database       = $database;
+        $this->username       = $username;
+        $this->password       = $password;
+        $this->dryRun         = $dryRun;
+        $this->employeeId     = $employeeId;
+        $this->submit         = $submit;
+        $this->projectManager = $projectManager;
+        $this->token          = $this->authenticate();
         $this->loadValueLists();
     }
 
@@ -237,12 +240,16 @@ class FileMakerTimeSheet
             echo "[FM] Updated totals: {$sumWorking}h work, {$sumTravel}h travel, {$sumKm}km, €{$sumParking} parking.\n";
 
             if ($this->submit) {
-                $this->request('GET',
-                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}") . '?script=Submit',
-                    null,
-                    ['Authorization: Bearer ' . $this->token]
+                // Set Date submitted and project manager on the Timesheet record
+                $this->request('PATCH',
+                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$this->timesheetId}"),
+                    ['fieldData' => [
+                        'Date submitted employee' => date('m/d/Y'),
+                        'ProjectManager'          => $this->projectManager,
+                    ]],
+                    ['Authorization: Bearer ' . $this->token, 'Content-Type: application/json']
                 );
-                echo "[FM] Timesheet submitted.\n";
+                echo "[FM] Timesheet submitted — date set to " . date('d-m-Y') . ", project manager set to {$this->projectManager}.\n";
             }
 
         } finally {
