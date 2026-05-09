@@ -27,6 +27,7 @@ class FileMakerTimeSheet
     private array  $disciplines     = [];
     private array  $classifications = [];
     private array  $projectCode     = [];
+    private array  $projectName     = [];  // display name without code prefix
     private array  $disciplineMap   = [
         'Developer'          => 'Developer',
         'Engineering'        => 'Engineering',
@@ -187,26 +188,17 @@ class FileMakerTimeSheet
                 $activity = $row['activity'] ?? null;
                 unset($row['activity']);
 
-                $response = $this->request('PATCH', $url, [
+                if ($activity !== null) {
+                    $row['Items::Activity'] = $activity;
+                }
+
+                $this->request('PATCH', $url, [
                     'fieldData'  => new \stdClass(),
                     'portalData' => ['ItemsTimesheet' => [$row]],
                 ], [
                     'Authorization: Bearer ' . $this->token,
                     'Content-Type: application/json',
                 ]);
-
-                // Set Activity on the newly created Items record via Items Detail layout
-                if ($activity !== null && !empty($response['response']['newPortalRecordInfo'])) {
-                    $itemsRecordId = $response['response']['newPortalRecordInfo'][0]['recordId'];
-                    $this->request('PATCH',
-                        $this->apiUrl("databases/{$this->database}/layouts/Items%20Detail/records/{$itemsRecordId}"),
-                        ['fieldData' => ['Activity' => $activity]],
-                        [
-                            'Authorization: Bearer ' . $this->token,
-                            'Content-Type: application/json',
-                        ]
-                    );
-                }
             }
 
             echo "[FM] Submitted " . count($this->pendingRows)
@@ -397,11 +389,17 @@ class FileMakerTimeSheet
     private function parseProjecten(array $values): void
     {
         foreach ($values as $item) {
-            $display = $item['displayValue'] ?? $item['value'];
             $code    = $item['value'];
+            $display = $item['displayValue'] ?? $code;
+
+            // FM display values include the code as prefix (e.g. "P2526 Weteringschans 16 - Amsterdam - D")
+            // Strip it so Projectname contains only the name, matching what the form stores
+            $nameOnly = trim(preg_replace('/^' . preg_quote($code, '/') . '\s+/', '', $display));
+
             if (!in_array($display, $this->projects, true)) {
-                $this->projects[]            = $display;
+                $this->projects[]            = $display;   // keep full display for matching
                 $this->projectCode[$display] = $code;
+                $this->projectName[$display] = $nameOnly;  // name without code prefix
             }
         }
     }
@@ -429,7 +427,7 @@ class FileMakerTimeSheet
 
         if (isset($this->projectCode[$projectName])) {
             $row['Items::Projectno']   = $this->projectCode[$projectName];
-            $row['Items::Projectname'] = $projectName;
+            $row['Items::Projectname'] = $this->projectName[$projectName] ?? $projectName;
             return;
         }
 
@@ -437,7 +435,7 @@ class FileMakerTimeSheet
         $stripped = preg_replace('/\s*\([^)]+\)\s*$/', '', $projectName);
         if ($stripped !== $projectName && isset($this->projectCode[$stripped])) {
             $row['Items::Projectno']   = $this->projectCode[$stripped];
-            $row['Items::Projectname'] = $stripped;
+            $row['Items::Projectname'] = $this->projectName[$stripped] ?? $stripped;
             return;
         }
 
