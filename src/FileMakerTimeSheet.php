@@ -55,6 +55,8 @@ class FileMakerTimeSheet
     private bool   $dryRun          = false;
     private bool   $submit          = false;
     private string $projectManager  = '';
+    private array  $classTypeIds    = [];  // ClassType -> ClassTypeID (recordId)
+    private array  $classTypeRates  = [];  // ClassType -> Rate
 
     public function __construct(
         string $url,
@@ -128,7 +130,7 @@ class FileMakerTimeSheet
             $row['Items::Kilometers'] = $entry->traveldistance;
         }
         if ($entry->parking !== null && $entry->parking > 0) {
-            $row['Items::Parking costs'] = $entry->parking;
+            $row['Items::Parking'] = $entry->parking;
         }
 
         // Mark billable entries for invoicing — mirrors Excel engine behaviour.
@@ -192,44 +194,43 @@ class FileMakerTimeSheet
                     $row['Items::Activity'] = $activity;
                 }
 
-                $this->request('PATCH', $url, [
+                $response = $this->request('PATCH', $url, [
                     'fieldData'  => new \stdClass(),
                     'portalData' => ['ItemsTimesheet' => [$row]],
                 ], [
                     'Authorization: Bearer ' . $this->token,
                     'Content-Type: application/json',
                 ]);
+
+                if ($itemsRecordId !== null) {
+                    $classType   = $row['Items::ClassType'] ?? null;
+                    $classTypeId = $classType ? ($this->classTypeIds[$classType] ?? null) : null;
+                    $rate        = $classType ? ($this->classTypeRates[$classType] ?? null) : null;
+
+                    $itemsFields = array_filter([
+                        'Employee'    => $this->employeeName,
+                        'EmployeeID'  => $this->employeeId ?: null,
+                        'Year'        => $this->year ?: null,
+                        'weekno'      => $this->weekNo ?: null,
+                        'Rate'        => $rate,
+                        'ClassTypeID' => $classTypeId,
+                    ], fn($v) => $v !== null && $v !== '');
+
+                    if (!empty($itemsFields)) {
+                        $this->request('PATCH',
+                            $this->apiUrl("databases/{$this->database}/layouts/Items%20Detail/records/{$itemsRecordId}"),
+                            ['fieldData' => $itemsFields],
+                            [
+                                'Authorization: Bearer ' . $this->token,
+                                'Content-Type: application/json',
+                            ]
+                        );
+                    }
+                }
             }
 
             echo "[FM] Submitted " . count($this->pendingRows)
                 . " entries for {$this->employeeName} week {$this->weekNo}/{$this->year}.\n";
-
-            // Calculate totals from pending rows and write them to the Timesheet record
-            $sumWorking  = 0.0;
-            $sumTravel   = 0.0;
-            $sumKm       = 0.0;
-            $sumParking  = 0.0;
-            foreach ($this->pendingRows as $row) {
-                $sumWorking += floatval($row['Items::WorkingTime'] ?? 0);
-                $sumTravel  += floatval($row['Items::TravelTime']  ?? 0);
-                $sumKm      += floatval($row['Items::Kilometers']  ?? 0);
-                $sumParking += floatval($row['Items::Parking costs'] ?? 0);
-            }
-
-            $this->request('PATCH', $url, [
-                'fieldData' => [
-                    'SumWorkingHours' => $sumWorking,
-                    'SumTravelHours'  => $sumTravel,
-                    'SumKm'           => $sumKm,
-                    'SumParking'      => $sumParking,
-                    'TotalTime'       => $sumWorking + $sumTravel,
-                ],
-            ], [
-                'Authorization: Bearer ' . $this->token,
-                'Content-Type: application/json',
-            ]);
-
-            echo "[FM] Updated totals: {$sumWorking}h work, {$sumTravel}h travel, {$sumKm}km, €{$sumParking} parking.\n";
 
             if ($this->submit) {
                 // Set Date submitted and project manager on the Timesheet record
@@ -290,19 +291,6 @@ class FileMakerTimeSheet
 
             if ($deleted > 0) {
                 echo "[FM] Deleted {$deleted} existing entries.\n";
-
-                // Reset stored totals to zero
-                $this->request('PATCH',
-                    $this->apiUrl("databases/{$this->database}/layouts/{$this->layoutTimesheet}/records/{$recordId}"),
-                    ['fieldData' => [
-                        'SumWorkingHours' => 0,
-                        'SumTravelHours'  => 0,
-                        'SumKm'           => 0,
-                        'SumParking'      => 0,
-                        'TotalTime'       => 0,
-                    ]],
-                    ['Authorization: Bearer ' . $this->token, 'Content-Type: application/json']
-                );
             }
 
             return $recordId;
@@ -383,7 +371,21 @@ class FileMakerTimeSheet
             };
         }
 
-        echo "[FM] Loaded " . count($this->projects) . " projects, " . count($this->disciplines) . " disciplines.\n";
+        // Load ClassTypeID and Rate from Classification layout
+        $classResp = $this->request('GET',
+            $this->apiUrl("databases/{$this->database}/layouts/Classification/records?_limit=50"),
+            null,
+            ['Authorization: Bearer ' . $this->token]
+        );
+        foreach ($classResp['response']['data'] ?? [] as $rec) {
+            $classType = $rec['fieldData']['ClassType'] ?? null;
+            if ($classType !== null) {
+                $this->classTypeIds[$classType] = (int) $rec['recordId'];
+                $this->classTypeRates[$classType] = (float) ($rec['fieldData']['Rate'] ?? 0);
+            }
+        }
+
+        echo "[FM] Loaded " . count($this->projects) . " projects, " . count($this->disciplines) . " disciplines, " . count($this->classTypeIds) . " class types.\n";
     }
 
     private function parseProjecten(array $values): void
