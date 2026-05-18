@@ -124,7 +124,8 @@ class FileMakerTimeSheet
             $row['Items::TimeInstaller'] = $entry->workhours;
         }
         if ($entry->travelhours !== null && $entry->travelhours > 0) {
-            $row['Items::TravelTime'] = $entry->travelhours;
+            $row['Items::TravelTime']      = $entry->travelhours;
+            $row['Items::Type Traveltime'] = 'p';
         }
         if ($entry->traveldistance !== null && $entry->traveldistance > 0) {
             $row['Items::Kilometers'] = $entry->traveldistance;
